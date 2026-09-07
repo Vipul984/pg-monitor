@@ -2,6 +2,9 @@ package main
 
 import "fmt"
 
+var j int
+
 func main() {
-	fmt.Printf("hello world vipul")
+	var i int
+	fmt.Print(i)
 }

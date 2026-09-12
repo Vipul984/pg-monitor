@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"os"
+	"os/signal"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	agentsinternal "github.com/Vipul984/pg-monitor/internal/AgentsInternal"
 )
 
 func main() {
@@ -18,11 +20,9 @@ func main() {
 	}
 	defer pool.Close()
 
-	var version string
-	err = pool.QueryRow(context.Background(), "SELECT version();").Scan(&version)
-	if err != nil {
-		log.Fatal(err)
-	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
 
-	fmt.Println(version)
+ 	agentRun := agentsinternal.NewAgentRun(pool)
+	agentRun.RunAgent(ctx)
 }

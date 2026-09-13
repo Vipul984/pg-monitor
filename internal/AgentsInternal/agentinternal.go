@@ -4,17 +4,22 @@ import (
 	"context"
 	"log"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/Vipul984/pg-monitor/internal/collector"
+	events "github.com/Vipul984/pg-monitor/internal/Events"
 )
 
 type AgentRun struct {
-	pool *pgxpool.Pool
+	pool       *pgxpool.Pool
+	collectors []collector.Collector
 }
 
-func NewAgentRun(pool *pgxpool.Pool) *AgentRun {
-	return &AgentRun{pool: pool}
+func NewAgentRun(pool *pgxpool.Pool, collectors []collector.Collector) *AgentRun {
+	return &AgentRun{pool: pool, collectors: collectors}
 }
 
 func (a *AgentRun) RunAgent(ctx context.Context) {
@@ -35,13 +40,32 @@ func (a *AgentRun) RunAgent(ctx context.Context) {
 }
 
 func (a *AgentRun) poll(ctx context.Context) {
-	var version string
-	err := a.pool.QueryRow(ctx, "SELECT version();").Scan(&version)
-	if err != nil {
-		log.Println("agent: poll failed:", err)
-		return
+	var wg sync.WaitGroup
+	results := make(chan []events.MetricEvent, len(a.collectors))
+
+	for _, c := range a.collectors {
+		wg.Add(1)
+		go func(c collector.Collector) {
+			defer wg.Done()
+
+			evs, err := c.Collect(ctx)
+			if err != nil {
+				log.Printf("agent: collector %s failed: %v", c.Name(), err)
+				return
+			}
+			results <- evs
+		}(c)
 	}
-	log.Println(version)
+
+	wg.Wait()
+	close(results)
+
+	for evs := range results {
+		for _, e := range evs {
+			log.Printf("metric: source=%s name=%s value=%d time=%s",
+				e.Source, e.MetricName, e.Value, e.Time.Format(time.RFC3339))
+		}
+	}
 }
 
 func pollInterval() time.Duration {

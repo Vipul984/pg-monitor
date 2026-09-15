@@ -7,19 +7,17 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/Vipul984/pg-monitor/internal/collector"
 	events "github.com/Vipul984/pg-monitor/internal/Events"
 )
 
 type AgentRun struct {
-	pool       *pgxpool.Pool
+	dbPools    *collector.DatabasePoolManager
 	collectors []collector.Collector
 }
 
-func NewAgentRun(pool *pgxpool.Pool, collectors []collector.Collector) *AgentRun {
-	return &AgentRun{pool: pool, collectors: collectors}
+func NewAgentRun(dbPools *collector.DatabasePoolManager, collectors []collector.Collector) *AgentRun {
+	return &AgentRun{dbPools: dbPools, collectors: collectors}
 }
 
 func (a *AgentRun) RunAgent(ctx context.Context) {
@@ -40,6 +38,10 @@ func (a *AgentRun) RunAgent(ctx context.Context) {
 }
 
 func (a *AgentRun) poll(ctx context.Context) {
+	if err := a.dbPools.Refresh(ctx); err != nil {
+		log.Printf("agent: database discovery failed: %v", err)
+	}
+
 	var wg sync.WaitGroup
 	results := make(chan []events.MetricEvent, len(a.collectors))
 

@@ -8,6 +8,7 @@ import (
 
 type MetricEvent struct{
 	Source string
+	Database string
 	MetricName pkg.MetricName
 	Value int64
 	Time time.Time

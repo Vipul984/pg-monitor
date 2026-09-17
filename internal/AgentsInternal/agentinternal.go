@@ -9,15 +9,17 @@ import (
 
 	"github.com/Vipul984/pg-monitor/internal/collector"
 	events "github.com/Vipul984/pg-monitor/internal/Events"
+	"github.com/Vipul984/pg-monitor/internal/storage"
 )
 
 type AgentRun struct {
 	dbPools    *collector.DatabasePoolManager
 	collectors []collector.Collector
+	storage    storage.Storage
 }
 
-func NewAgentRun(dbPools *collector.DatabasePoolManager, collectors []collector.Collector) *AgentRun {
-	return &AgentRun{dbPools: dbPools, collectors: collectors}
+func NewAgentRun(dbPools *collector.DatabasePoolManager, collectors []collector.Collector, store storage.Storage) *AgentRun {
+	return &AgentRun{dbPools: dbPools, collectors: collectors, storage: store}
 }
 
 func (a *AgentRun) RunAgent(ctx context.Context) {
@@ -62,12 +64,21 @@ func (a *AgentRun) poll(ctx context.Context) {
 	wg.Wait()
 	close(results)
 
+	var all []events.MetricEvent
 	for evs := range results {
-		for _, e := range evs {
-			log.Printf("metric: source=%s name=%s value=%d time=%s",
-				e.Source, e.MetricName, e.Value, e.Time.Format(time.RFC3339))
-		}
+		all = append(all, evs...)
 	}
+
+	if len(all) == 0 {
+		return
+	}
+
+	if err := a.storage.Store(ctx, all); err != nil {
+		log.Printf("agent: storing metrics failed: %v", err)
+		return
+	}
+
+	log.Printf("agent: stored %d metrics", len(all))
 }
 
 func pollInterval() time.Duration {

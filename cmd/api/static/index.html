@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>pg-monitor</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<script src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
+<style>
+  .uplot, .uplot *, .uplot *::before, .uplot *::after {box-sizing: border-box;}
+  .uplot {font-family: "IBM Plex Sans", system-ui, sans-serif;line-height: 1.5;width: 100%;}
+  .u-wrap {position: relative;user-select: none;}
+  .u-over, .u-under {position: absolute;}
+  .u-under {overflow: hidden;}
+  .uplot canvas {display: block;position: relative;width: 100%;height: 100%;}
+  .u-axis {position: absolute;}
+  .u-legend {font-size: 12px;margin: 8px auto 0;text-align: center;}
+  .u-inline {display: block;}
+  .u-inline * {display: inline-block;}
+  .u-inline tr {margin-right: 16px;}
+  .u-legend th {font-weight: 600;}
+  .u-legend th > * {vertical-align: middle;display: inline-block;}
+  .u-legend .u-marker {width: 1em;height: 1em;margin-right: 4px;background-clip: padding-box !important;}
+  .u-inline.u-live th::after {content: ":";vertical-align: middle;}
+  .u-series > * {padding: 4px;}
+  .u-cursor-x, .u-cursor-y {position: absolute;left: 0;top: 0;pointer-events: none;will-change: transform;}
+  .u-hz .u-cursor-x {height: 100%;border-right: 1px dashed var(--border);}
+  .u-hz .u-cursor-y {width: 100%;border-bottom: 1px dashed var(--border);}
+  .u-cursor-pt {position: absolute;top: 0;left: 0;border-radius: 50%;border: 0 solid;pointer-events: none;will-change: transform;background-clip: padding-box !important;}
+</style>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #F4F6F9;
+    --surface: #FFFFFF;
+    --surface-2: #EAEFF3;
+    --border: #DCE4EA;
+    --ink: #16232B;
+    --ink-2: #51616B;
+    --ink-muted: #8497A1;
+    --accent: #0D6E6E;
+    --accent-strong: #0A5252;
+    --accent-soft: #DCF0EE;
+    --good: #2E9B4F;
+    --good-soft: #E3F5E9;
+    --warning: #A8690F;
+    --warning-soft: #FBEEDB;
+    --critical: #C0392B;
+    --critical-soft: #FBE4E1;
+    --shadow: 0 1px 2px rgba(16,35,43,0.06), 0 8px 24px -12px rgba(16,35,43,0.12);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #10161A;
+      --surface: #171E22;
+      --surface-2: #1E262B;
+      --border: #2A343A;
+      --ink: #E7EEF0;
+      --ink-2: #A9B8BE;
+      --ink-muted: #74858C;
+      --accent: #3FBDBD;
+      --accent-strong: #63D1CF;
+      --accent-soft: rgba(63,189,189,0.16);
+      --good: #4CB870;
+      --good-soft: rgba(76,184,112,0.14);
+      --warning: #E0A93E;
+      --warning-soft: rgba(224,169,62,0.14);
+      --critical: #E06457;
+      --critical-soft: rgba(224,100,87,0.14);
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px -12px rgba(0,0,0,0.5);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #10161A;
+    --surface: #171E22;
+    --surface-2: #1E262B;
+    --border: #2A343A;
+    --ink: #E7EEF0;
+    --ink-2: #A9B8BE;
+    --ink-muted: #74858C;
+    --accent: #3FBDBD;
+    --accent-strong: #63D1CF;
+    --accent-soft: rgba(63,189,189,0.16);
+    --good: #4CB870;
+    --good-soft: rgba(76,184,112,0.14);
+    --warning: #E0A93E;
+    --warning-soft: rgba(224,169,62,0.14);
+    --critical: #E06457;
+    --critical-soft: rgba(224,100,87,0.14);
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px -12px rgba(0,0,0,0.5);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .mono { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace; }
+  .tnum { font-variant-numeric: tabular-nums; }
+
+  .shell { display: flex; min-height: 100vh; }
+
+  /* ---- sidebar ---- */
+  .sidebar {
+    width: 248px;
+    flex: none;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 20px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 0 6px; }
+  .brand-mark {
+    width: 30px; height: 30px; border-radius: 8px;
+    background: var(--accent); color: white;
+    display: flex; align-items: center; justify-content: center;
+    font-family: "IBM Plex Mono", monospace; font-weight: 600; font-size: 14px;
+  }
+  .brand-name { font-weight: 600; font-size: 15px; letter-spacing: -0.01em; }
+  .brand-sub { font-size: 11px; color: var(--ink-muted); margin-top: -2px; }
+
+  .nav-group { display: flex; flex-direction: column; gap: 2px; }
+  .nav-label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--ink-muted); padding: 0 10px; margin-bottom: 6px; font-weight: 600;
+  }
+  .nav-item {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 8px 10px; border-radius: 7px;
+    font-size: 13.5px; color: var(--ink-2); cursor: pointer;
+    border: 1px solid transparent;
+  }
+  .nav-item:hover { background: var(--surface-2); }
+  .nav-item.active {
+    background: var(--accent-soft); color: var(--accent-strong); font-weight: 600;
+  }
+  .nav-item.locked { color: var(--ink-muted); cursor: not-allowed; }
+  .nav-item.locked:hover { background: transparent; }
+  .nav-left { display: flex; align-items: center; gap: 9px; min-width: 0; }
+  .nav-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: currentColor; opacity: 0.55; }
+  .nav-item.active .nav-dot { background: var(--accent); opacity: 1; }
+  .nav-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .soon-tag {
+    font-size: 9.5px; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--ink-muted); background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: 4px; padding: 1.5px 5px; flex: none;
+  }
+
+  .sidebar-footer {
+    margin-top: auto; padding: 10px; border-top: 1px solid var(--border);
+    font-size: 11.5px; color: var(--ink-muted); display: flex; flex-direction: column; gap: 5px;
+  }
+  .poll-row { display: flex; align-items: center; gap: 7px; }
+  .live-dot {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--good); flex: none;
+    box-shadow: 0 0 0 0 rgba(46,155,79,0.5);
+    animation: pulse 2.4s ease-out infinite;
+  }
+  @media (prefers-reduced-motion: reduce) { .live-dot { animation: none; } }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(46,155,79,0.45); }
+    70% { box-shadow: 0 0 0 6px rgba(46,155,79,0); }
+    100% { box-shadow: 0 0 0 0 rgba(46,155,79,0); }
+  }
+
+  /* ---- main ---- */
+  .main { flex: 1; min-width: 0; padding: 26px 32px 60px; }
+  .topbar {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 16px; flex-wrap: wrap; margin-bottom: 22px;
+  }
+  .page-title { font-size: 21px; font-weight: 600; letter-spacing: -0.01em; text-wrap: balance; }
+  .page-sub { font-size: 13px; color: var(--ink-2); margin-top: 3px; }
+  .refresh-note { font-size: 12px; color: var(--ink-muted); white-space: nowrap; }
+
+  /* ---- overview: calm surface ---- */
+  .alert-callout {
+    display: flex; align-items: center; gap: 16px;
+    background: var(--critical-soft); border: 1px solid var(--critical);
+    border-radius: 12px; padding: 16px 18px; margin-bottom: 24px;
+  }
+  .alert-callout.calm { background: var(--good-soft); border-color: var(--good); }
+  .alert-icon {
+    width: 34px; height: 34px; border-radius: 9px; flex: none;
+    background: var(--critical); color: white;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 16px;
+  }
+  .alert-callout.calm .alert-icon { background: var(--good); }
+  .alert-body { flex: 1; min-width: 0; }
+  .alert-title { font-size: 15px; font-weight: 600; color: var(--ink); }
+  .alert-desc { font-size: 12.5px; color: var(--ink-2); margin-top: 2px; max-width: 62ch; }
+  .alert-chips { display: flex; gap: 6px; margin-top: 9px; flex-wrap: wrap; }
+  .alert-chip {
+    font-family: "IBM Plex Mono", monospace; font-size: 11px;
+    background: var(--surface); border: 1px solid var(--border); color: var(--ink);
+    padding: 2.5px 8px; border-radius: 6px;
+  }
+  .alert-cta {
+    flex: none; background: var(--ink); color: var(--bg); border: none;
+    font-family: inherit; font-size: 12.5px; font-weight: 600;
+    padding: 9px 14px; border-radius: 8px; cursor: pointer;
+  }
+  .alert-cta:hover { opacity: 0.88; }
+
+  .quiet-stats {
+    display: flex; gap: 28px; flex-wrap: wrap; padding: 2px 2px 4px;
+  }
+  .quiet-stat { display: flex; flex-direction: column; gap: 3px; }
+  .qs-label { font-size: 11.5px; color: var(--ink-muted); }
+  .qs-value { font-size: 15px; font-weight: 600; color: var(--ink); }
+
+  /* section card */
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    box-shadow: var(--shadow); overflow: hidden; margin-bottom: 22px;
+  }
+  .card-head { padding: 16px 18px 4px; }
+  .card-title { font-size: 15px; font-weight: 600; }
+  .card-desc { font-size: 12.5px; color: var(--ink-2); margin-top: 2px; max-width: 60ch; }
+  .card-body { padding: 10px 18px 18px; }
+
+  /* chart */
+  .chart-wrap { position: relative; }
+  .bar-row { display: flex; align-items: center; gap: 10px; height: 30px; }
+  .bar-label {
+    width: 168px; flex: none; font-size: 12px; text-align: right; padding-right: 4px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2);
+  }
+  .bar-track { flex: 1; position: relative; height: 14px; }
+  .bar-fill {
+    position: absolute; left: 0; top: 0; height: 100%; border-radius: 4px;
+    background: var(--accent); min-width: 4px; cursor: pointer;
+    transition: filter 0.12s ease;
+  }
+  .bar-fill:hover, .bar-fill:focus-visible { filter: brightness(1.12); outline: none; }
+  .bar-value {
+    width: 74px; flex: none; font-size: 12px; text-align: right; color: var(--ink);
+  }
+  .chart-axis {
+    display: flex; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border);
+  }
+  .chart-axis-spacer { width: 178px; flex: none; }
+  .chart-axis-ticks { flex: 1; display: flex; justify-content: space-between; }
+  .chart-axis-ticks span { font-size: 10.5px; color: var(--ink-muted); }
+  .chart-axis-end { width: 74px; flex: none; }
+
+  .tooltip {
+    position: fixed; pointer-events: none; z-index: 30;
+    background: var(--ink); color: var(--bg);
+    font-size: 11.5px; padding: 6px 9px; border-radius: 6px;
+    box-shadow: var(--shadow); opacity: 0; transform: translateY(3px);
+    transition: opacity 0.1s ease, transform 0.1s ease;
+    white-space: nowrap;
+  }
+  .tooltip.show { opacity: 1; transform: translateY(0); }
+  .tooltip b { font-family: "IBM Plex Mono", monospace; }
+
+  /* table */
+  .table-scroll { overflow-x: auto; }
+  table.metrics { width: 100%; border-collapse: collapse; font-size: 12.5px; min-width: 720px; }
+  table.metrics th {
+    text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--ink-muted); font-weight: 600; padding: 8px 10px; border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  table.metrics td {
+    padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: middle;
+  }
+  table.metrics tbody tr:hover { background: var(--surface-2); }
+  .table-name { font-family: "IBM Plex Mono", monospace; font-weight: 500; }
+  .db-tag {
+    font-family: "IBM Plex Mono", monospace; font-size: 10.5px; color: var(--ink-muted);
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px;
+    padding: 1.5px 5px; margin-left: 7px;
+  }
+  .scan-mix { display: flex; align-items: center; gap: 6px; width: 110px; }
+  .scan-track {
+    flex: 1; height: 6px; border-radius: 3px; overflow: hidden; display: flex; background: var(--surface-2);
+    gap: 2px;
+  }
+  .scan-idx { background: var(--accent); height: 100%; }
+  .scan-seq { background: var(--ink-muted); height: 100%; }
+  .scan-note { font-size: 10.5px; color: var(--ink-muted); flex: none; }
+  .bloat-cell { display: flex; align-items: center; gap: 8px; width: 128px; }
+  .bloat-track { flex: 1; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+  .bloat-fill { height: 100%; border-radius: 3px; }
+  .bloat-pct { width: 40px; flex: none; text-align: right; font-size: 11.5px; }
+  .status-pill {
+    display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600;
+    padding: 2.5px 8px; border-radius: 999px;
+  }
+  .status-pill .dot { width: 6px; height: 6px; border-radius: 50%; }
+  .status-pill.good { background: var(--good-soft); color: var(--good); }
+  .status-pill.good .dot { background: var(--good); }
+  .status-pill.critical { background: var(--critical-soft); color: var(--critical); }
+  .status-pill.critical .dot { background: var(--critical); }
+  .status-pill.warning { background: var(--warning-soft); color: var(--warning); }
+  .status-pill.warning .dot { background: var(--warning); }
+
+  .legend { display: flex; gap: 16px; padding: 0 18px 14px; font-size: 11.5px; color: var(--ink-2); flex-wrap: wrap; }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-swatch { width: 10px; height: 10px; border-radius: 3px; }
+
+  @media (max-width: 780px) {
+    .shell { flex-direction: column; }
+    .sidebar { width: 100%; flex-direction: row; align-items: center; overflow-x: auto; padding: 12px 14px; }
+    .nav-group { flex-direction: row; }
+    .sidebar-footer { display: none; }
+    .main { padding: 20px 16px 40px; }
+    .bar-label { width: 96px; font-size: 11px; }
+    .chart-axis-spacer { width: 106px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">pg</div>
+      <div>
+        <div class="brand-name">pg-monitor</div>
+        <div class="brand-sub">host: db-primary-01</div>
+      </div>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-label">Monitoring</div>
+      <div class="nav-item active" data-view="overview"><span class="nav-left"><span class="nav-dot"></span><span class="nav-name">Overview</span></span></div>
+      <div class="nav-item" data-view="hot-tables"><span class="nav-left"><span class="nav-dot"></span><span class="nav-name">Hot Tables</span></span></div>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-label">Failure detection</div>
+      <div class="nav-item locked"><span class="nav-left"><span class="nav-dot"></span><span class="nav-name">Lock contention (P0)</span></span><span class="soon-tag">soon</span></div>
+      <div class="nav-item locked"><span class="nav-left"><span class="nav-dot"></span><span class="nav-name">XID wraparound (P1)</span></span><span class="soon-tag">soon</span></div>
+      <div class="nav-item locked"><span class="nav-left"><span class="nav-dot"></span><span class="nav-name">Autovacuum &amp; bloat (P3)</span></span><span class="soon-tag">soon</span></div>
+      <div class="nav-item locked"><span class="nav-left"><span class="nav-dot"></span><span class="nav-name">Connections (P4)</span></span><span class="soon-tag">soon</span></div>
+      <div class="nav-item locked"><span class="nav-left"><span class="nav-dot"></span><span class="nav-name">MultiXact (P2)</span></span><span class="soon-tag">soon</span></div>
+      <div class="nav-item locked"><span class="nav-left"><span class="nav-dot"></span><span class="nav-name">Replication lag (P5)</span></span><span class="soon-tag">soon</span></div>
+    </div>
+
+    <div class="sidebar-footer">
+      <div class="poll-row"><span class="live-dot"></span><span>polling every 15s</span></div>
+      <div id="refreshedAt">refreshed just now</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <section id="view-overview">
+      <div class="topbar">
+        <div>
+          <div class="page-title">Overview</div>
+          <div class="page-sub">db-primary-01 &middot; everything pg-monitor knows about this host, at a glance</div>
+        </div>
+        <div class="refresh-note">Last poll: <span class="mono tnum">12s ago</span></div>
+      </div>
+
+      <div class="alert-callout" id="attentionCallout">
+        <div class="alert-icon" id="alertIcon">!</div>
+        <div class="alert-body">
+          <div class="alert-title" id="alertTitle">-</div>
+          <div class="alert-desc" id="alertDesc">-</div>
+          <div class="alert-chips" id="alertChips"></div>
+        </div>
+        <button class="alert-cta" id="alertCta">View details &rarr;</button>
+      </div>
+
+      <div class="quiet-stats">
+        <div class="quiet-stat"><span class="qs-label">Databases monitored</span><span class="qs-value mono tnum" id="ovDbs">-</span></div>
+        <div class="quiet-stat"><span class="qs-label">Tables tracked</span><span class="qs-value mono tnum" id="ovTables">-</span></div>
+        <div class="quiet-stat"><span class="qs-label">Busiest table</span><span class="qs-value mono" id="ovBusiest">-</span></div>
+      </div>
+    </section>
+
+    <section id="view-hot-tables" hidden>
+      <div class="topbar">
+        <div>
+          <div class="page-title">Hot Tables</div>
+          <div class="page-sub">Write volume, scan pattern and bloat across 3 monitored databases &middot; ranked by <span class="mono">n_tup_ins + n_tup_upd + n_tup_del</span></div>
+        </div>
+        <div class="refresh-note">Last poll: <span class="mono tnum">12s ago</span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="card-title">sessions &mdash; write throughput</div>
+          <div class="card-desc">analytics_db &middot; last 60 minutes at 15s resolution &mdash; matches the agent's own poll interval, once <span class="mono">internal/storage</span> is actually queried.</div>
+        </div>
+        <div class="card-body">
+          <div id="throughputChart"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="card-title">Write volume by table</div>
+          <div class="card-desc">Top 8 tables across all monitored databases this tick, by total inserts + updates + deletes.</div>
+        </div>
+        <div class="card-body">
+          <div class="chart-wrap" id="chart"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="card-title">All tracked tables</div>
+          <div class="card-desc">Scan mix flags tables the planner is reading sequentially more than expected; dead-tuple ratio flags autovacuum falling behind (ties to P3).</div>
+        </div>
+        <div class="legend">
+          <span class="legend-item"><span class="legend-swatch" style="background:var(--accent)"></span>index scans</span>
+          <span class="legend-item"><span class="legend-swatch" style="background:var(--ink-muted)"></span>seq scans</span>
+          <span class="legend-item"><span class="legend-swatch" style="background:var(--good)"></span>dead tuples &lt; 5%</span>
+          <span class="legend-item"><span class="legend-swatch" style="background:var(--critical)"></span>dead tuples &gt; 15%</span>
+        </div>
+        <div class="card-body table-scroll">
+          <table class="metrics">
+            <thead>
+              <tr>
+                <th>Table</th>
+                <th>Writes</th>
+                <th>Scan mix (idx / seq)</th>
+                <th>Dead-tuple ratio</th>
+                <th>Live rows</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="tableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+  const tables = [
+    { db: "orders_db",    name: "orders",           ins: 4200,  upd: 15800, del: 120,   seq: 340,  idx: 89000,  live: 182000,  dead: 3100 },
+    { db: "orders_db",    name: "order_items",       ins: 9800,  upd: 2100,  del: 300,   seq: 210,  idx: 145000, live: 410000,  dead: 5200 },
+    { db: "orders_db",    name: "customers",         ins: 340,   upd: 1200,  del: 10,    seq: 80,   idx: 52000,  live: 68000,   dead: 900 },
+    { db: "orders_db",    name: "payments",          ins: 4100,  upd: 4100,  del: 0,     seq: 120,  idx: 98000,  live: 165000,  dead: 14300 },
+    { db: "orders_db",    name: "refunds",           ins: 210,   upd: 210,   del: 0,     seq: 40,   idx: 8100,   live: 4200,    dead: 80 },
+    { db: "billing_db",   name: "invoices",          ins: 1800,  upd: 3200,  del: 40,    seq: 95,   idx: 41000,  live: 88000,   dead: 1600 },
+    { db: "billing_db",   name: "subscriptions",     ins: 260,   upd: 980,   del: 15,    seq: 60,   idx: 22000,  live: 19500,   dead: 260 },
+    { db: "billing_db",   name: "webhooks_log",      ins: 26000, upd: 0,     del: 24500, seq: 1850, idx: 900,    live: 15000,   dead: 9800 },
+    { db: "billing_db",   name: "audit_log",         ins: 31000, upd: 0,     del: 0,     seq: 2200, idx: 150,    live: 410000,  dead: 96000 },
+    { db: "analytics_db", name: "events_raw",        ins: 48000, upd: 0,     del: 0,     seq: 3100, idx: 400,    live: 1250000, dead: 41000 },
+    { db: "analytics_db", name: "sessions",          ins: 22000, upd: 22000, del: 21000, seq: 410,  idx: 61000,  live: 9000,    dead: 1800 },
+    { db: "analytics_db", name: "daily_rollups",     ins: 300,   upd: 300,   del: 0,     seq: 900,  idx: 1200,   live: 3600,    dead: 40 },
+    { db: "analytics_db", name: "user_preferences",  ins: 90,    upd: 640,   del: 5,     seq: 30,   idx: 18000,  live: 22000,   dead: 210 },
+    { db: "analytics_db", name: "product_catalog",   ins: 40,    upd: 210,   del: 2,     seq: 55,   idx: 9800,   live: 4100,    dead: 60 },
+  ].map(t => {
+    const writes = t.ins + t.upd + t.del;
+    const deadRatio = t.dead / (t.live + t.dead);
+    let status = "good";
+    if (deadRatio > 0.15) status = "critical";
+    else if (deadRatio > 0.05) status = "warning";
+    return { ...t, writes, deadRatio, status };
+  });
+
+  const fmt = n => n >= 1000 ? (n / 1000).toFixed(n % 1000 === 0 ? 0 : 1) + "k" : String(n);
+  const fmtExact = n => n.toLocaleString("en-US");
+
+  let throughputChartBuilt = false;
+  function renderThroughputChart() {
+    if (throughputChartBuilt) return;
+    throughputChartBuilt = true;
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    const stepSec = 15;
+    const points = 240;
+    const xs = new Array(points);
+    const ys = new Array(points);
+    let seed = 42;
+    const rand = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+
+    for (let i = 0; i < points; i++) {
+      xs[i] = nowSec - (points - 1 - i) * stepSec;
+      const wave = Math.sin(i / 22) * 6;
+      const spike = (i > 150 && i < 162) ? (i - 150) * 2.4 : (i >= 162 && i < 176) ? (176 - i) * 2.1 : 0;
+      const noise = (rand() - 0.5) * 7;
+      ys[i] = Math.max(2, Math.round(24 + wave + spike + noise));
+    }
+
+    const css = getComputedStyle(document.documentElement);
+    const token = name => css.getPropertyValue(name).trim();
+
+    const el = document.getElementById("throughputChart");
+    const opts = {
+      width: el.clientWidth,
+      height: 220,
+      padding: [10, 10, 0, 0],
+      cursor: { points: { size: 7, fill: token("--accent") } },
+      scales: { x: { time: true } },
+      axes: [
+        { stroke: token("--ink-muted"), grid: { stroke: token("--border"), width: 1 }, ticks: { stroke: token("--border") }, font: "11px IBM Plex Mono" },
+        { stroke: token("--ink-muted"), grid: { stroke: token("--border"), width: 1 }, ticks: { stroke: token("--border") }, font: "11px IBM Plex Mono" },
+      ],
+      series: [
+        {},
+        {
+          label: "writes / tick",
+          stroke: token("--accent"),
+          width: 2,
+          fill: token("--accent-soft"),
+          points: { show: false },
+        },
+      ],
+    };
+
+    const chart = new uPlot(opts, [xs, ys], el);
+    window.addEventListener("resize", () => chart.setSize({ width: el.clientWidth, height: 220 }));
+  }
+
+  const dbs = [...new Set(tables.map(t => t.db))];
+  const busiest = [...tables].sort((a, b) => b.writes - a.writes)[0];
+  const critical = tables.filter(t => t.status === "critical");
+
+  document.getElementById("ovDbs").textContent = dbs.length;
+  document.getElementById("ovTables").textContent = tables.length;
+  document.getElementById("ovBusiest").textContent = busiest.name;
+
+  const callout = document.getElementById("attentionCallout");
+  const alertIcon = document.getElementById("alertIcon");
+  const alertTitle = document.getElementById("alertTitle");
+  const alertDesc = document.getElementById("alertDesc");
+  const alertChips = document.getElementById("alertChips");
+
+  if (critical.length > 0) {
+    alertTitle.textContent = critical.length + (critical.length === 1 ? " table needs" : " tables need") + " attention";
+    alertDesc.textContent = "Dead-tuple ratio above 15% — autovacuum is falling behind on these tables.";
+    alertChips.innerHTML = critical.map(t => `<span class="alert-chip">${t.db}.${t.name}</span>`).join("");
+  } else {
+    callout.classList.add("calm");
+    alertIcon.textContent = "✓";
+    alertTitle.textContent = "Everything's healthy";
+    alertDesc.textContent = "No table on this host has fallen behind on vacuuming.";
+    alertChips.innerHTML = "";
+  }
+
+  document.getElementById("alertCta").addEventListener("click", () => switchView("hot-tables"));
+
+  const views = { overview: document.getElementById("view-overview"), "hot-tables": document.getElementById("view-hot-tables") };
+  const navItems = document.querySelectorAll(".nav-item[data-view]");
+  function switchView(name) {
+    Object.entries(views).forEach(([key, el]) => { el.hidden = key !== name; });
+    navItems.forEach(el => el.classList.toggle("active", el.dataset.view === name));
+    if (name === "hot-tables") renderThroughputChart();
+  }
+  navItems.forEach(el => el.addEventListener("click", () => switchView(el.dataset.view)));
+
+  const top8 = [...tables].sort((a, b) => b.writes - a.writes).slice(0, 8);
+  const domainMax = Math.ceil(Math.max(...top8.map(t => t.writes)) / 10000) * 10000 + 5000;
+  const chartEl = document.getElementById("chart");
+  const tooltip = document.getElementById("tooltip");
+
+  top8.forEach(t => {
+    const row = document.createElement("div");
+    row.className = "bar-row";
+    const pct = (t.writes / domainMax) * 100;
+    row.innerHTML = `
+      <div class="bar-label" title="${t.name} (${t.db})">${t.name}<span class="db-tag" style="margin-left:6px;">${t.db}</span></div>
+      <div class="bar-track"><div class="bar-fill" style="width:${pct}%" tabindex="0"
+        data-name="${t.name}" data-db="${t.db}" data-writes="${fmtExact(t.writes)}"></div></div>
+      <div class="bar-value mono tnum">${fmtExact(t.writes)}</div>
+    `;
+    chartEl.appendChild(row);
+  });
+
+  const axis = document.createElement("div");
+  axis.className = "chart-axis";
+  const ticks = [0, domainMax / 2, domainMax];
+  axis.innerHTML = `
+    <div class="chart-axis-spacer"></div>
+    <div class="chart-axis-ticks">${ticks.map(v => `<span class="tnum">${fmt(v)}</span>`).join("")}</div>
+    <div class="chart-axis-end"></div>
+  `;
+  chartEl.appendChild(axis);
+
+  function showTooltip(e, html) {
+    tooltip.innerHTML = html;
+    tooltip.style.left = (e.clientX + 14) + "px";
+    tooltip.style.top = (e.clientY - 12) + "px";
+    tooltip.classList.add("show");
+  }
+  function hideTooltip() { tooltip.classList.remove("show"); }
+
+  chartEl.querySelectorAll(".bar-fill").forEach(bar => {
+    bar.addEventListener("mousemove", e => {
+      showTooltip(e, `<b>${bar.dataset.name}</b> · ${bar.dataset.db}<br>${bar.dataset.writes} writes this tick`);
+    });
+    bar.addEventListener("mouseleave", hideTooltip);
+    bar.addEventListener("focus", e => showTooltip(e, `<b>${bar.dataset.name}</b> · ${bar.dataset.db}<br>${bar.dataset.writes} writes this tick`));
+    bar.addEventListener("blur", hideTooltip);
+  });
+
+  const tbody = document.getElementById("tableBody");
+  [...tables].sort((a, b) => b.writes - a.writes).forEach(t => {
+    const idxShare = t.idx / (t.idx + t.seq || 1) * 100;
+    const seqShare = 100 - idxShare;
+    const deadPct = (t.deadRatio * 100);
+    const deadPctLabel = deadPct < 1 ? deadPct.toFixed(1) : Math.round(deadPct);
+    const statusColorVar = t.status === "critical" ? "var(--critical)" : t.status === "warning" ? "var(--warning)" : "var(--good)";
+
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><span class="table-name">${t.name}</span><span class="db-tag">${t.db}</span></td>
+      <td class="mono tnum">${fmtExact(t.writes)}</td>
+      <td>
+        <div class="scan-mix">
+          <div class="scan-track">
+            <div class="scan-idx" style="width:${idxShare}%"></div>
+            <div class="scan-seq" style="width:${seqShare}%"></div>
+          </div>
+          <span class="scan-note tnum">${fmtExact(t.idx)}/${fmtExact(t.seq)}</span>
+        </div>
+      </td>
+      <td>
+        <div class="bloat-cell">
+          <div class="bloat-track"><div class="bloat-fill" style="width:${Math.min(deadPct,100)}%;background:${statusColorVar}"></div></div>
+          <span class="bloat-pct tnum">${deadPctLabel}%</span>
+        </div>
+      </td>
+      <td class="mono tnum">${fmtExact(t.live)}</td>
+      <td>
+        <span class="status-pill ${t.status}">
+          <span class="dot"></span>${t.status === 'critical' ? 'Vacuum behind' : t.status === 'warning' ? 'Watch bloat' : 'OK'}
+        </span>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+</script>
+</body>
+</html>

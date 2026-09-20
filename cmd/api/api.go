@@ -1,9 +1,15 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/Vipul984/pg-monitor/internal/storage"
+	"github.com/Vipul984/pg-monitor/web"
 )
 
 func main() {
@@ -12,11 +18,30 @@ func main() {
 		addr = ":8080"
 	}
 
-	mux := http.NewServeMux()
-	mux.Handle("/", http.FileServer(http.Dir("cmd/api/static")))
+	// Storage is optional at startup on purpose: without it the dashboard
+	// shell still serves and tells the user what's misconfigured, which beats
+	// refusing to boot and showing nothing at all.
+	var store *storage.PgStorage
+
+	if storageDSN := os.Getenv("PGMONITOR_STORAGE_DSN"); storageDSN == "" {
+		log.Print("api: PGMONITOR_STORAGE_DSN not set — serving the UI only, no data endpoints")
+	} else {
+		storagePool, err := pgxpool.New(context.Background(), storageDSN)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer storagePool.Close()
+
+		store, err = storage.NewPgStorage(context.Background(), storagePool)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	srv := web.NewServer(store)
 
 	log.Printf("api: listening on %s", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	if err := http.ListenAndServe(addr, srv.Routes()); err != nil {
 		log.Fatal(err)
 	}
 }

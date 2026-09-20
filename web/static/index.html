@@ -187,6 +187,7 @@
     border-radius: 12px; padding: 16px 18px; margin-bottom: 24px;
   }
   .alert-callout.calm { background: var(--good-soft); border-color: var(--good); }
+  .alert-callout.empty { background: var(--surface); border-color: var(--border); }
   .alert-icon {
     width: 34px; height: 34px; border-radius: 9px; flex: none;
     background: var(--critical); color: white;
@@ -194,6 +195,13 @@
     font-weight: 700; font-size: 16px;
   }
   .alert-callout.calm .alert-icon { background: var(--good); }
+  .alert-callout.empty .alert-icon { background: var(--surface-2); color: var(--ink-muted); }
+
+  .sample-tag {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;
+    color: var(--warning); background: var(--warning-soft);
+    border: 1px solid var(--warning); border-radius: 4px; padding: 2px 6px; margin-left: 8px;
+  }
   .alert-body { flex: 1; min-width: 0; }
   .alert-title { font-size: 15px; font-weight: 600; color: var(--ink); }
   .alert-desc { font-size: 12.5px; color: var(--ink-2); margin-top: 2px; max-width: 62ch; }
@@ -361,7 +369,7 @@
           <div class="page-title">Overview</div>
           <div class="page-sub">db-primary-01 &middot; everything pg-monitor knows about this host, at a glance</div>
         </div>
-        <div class="refresh-note">Last poll: <span class="mono tnum">12s ago</span></div>
+        <div class="refresh-note">Last poll: <span class="mono tnum" id="ovLastPoll">&mdash;</span></div>
       </div>
 
       <div class="alert-callout" id="attentionCallout">
@@ -384,8 +392,8 @@
     <section id="view-hot-tables" hidden>
       <div class="topbar">
         <div>
-          <div class="page-title">Hot Tables</div>
-          <div class="page-sub">Write volume, scan pattern and bloat across 3 monitored databases &middot; ranked by <span class="mono">n_tup_ins + n_tup_upd + n_tup_del</span></div>
+          <div class="page-title">Hot Tables<span class="sample-tag">sample data</span></div>
+          <div class="page-sub">Not wired to the API yet &mdash; these numbers are placeholders until <span class="mono">/api/tables</span> exists.</div>
         </div>
         <div class="refresh-note">Last poll: <span class="mono tnum">12s ago</span></div>
       </div>
@@ -522,33 +530,89 @@
     window.addEventListener("resize", () => chart.setSize({ width: el.clientWidth, height: 220 }));
   }
 
-  const dbs = [...new Set(tables.map(t => t.db))];
-  const busiest = [...tables].sort((a, b) => b.writes - a.writes)[0];
-  const critical = tables.filter(t => t.status === "critical");
-
-  document.getElementById("ovDbs").textContent = dbs.length;
-  document.getElementById("ovTables").textContent = tables.length;
-  document.getElementById("ovBusiest").textContent = busiest.name;
-
+  // ---- overview: live, from /api/overview ----
   const callout = document.getElementById("attentionCallout");
   const alertIcon = document.getElementById("alertIcon");
   const alertTitle = document.getElementById("alertTitle");
   const alertDesc = document.getElementById("alertDesc");
   const alertChips = document.getElementById("alertChips");
+  const alertCta = document.getElementById("alertCta");
 
-  if (critical.length > 0) {
-    alertTitle.textContent = critical.length + (critical.length === 1 ? " table needs" : " tables need") + " attention";
-    alertDesc.textContent = "Dead-tuple ratio above 15% — autovacuum is falling behind on these tables.";
-    alertChips.innerHTML = critical.map(t => `<span class="alert-chip">${t.db}.${t.name}</span>`).join("");
-  } else {
-    callout.classList.add("calm");
-    alertIcon.textContent = "✓";
-    alertTitle.textContent = "Everything's healthy";
-    alertDesc.textContent = "No table on this host has fallen behind on vacuuming.";
-    alertChips.innerHTML = "";
+  function relativeTime(iso) {
+    const seconds = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+    if (seconds < 60) return seconds + "s ago";
+    if (seconds < 3600) return Math.round(seconds / 60) + "m ago";
+    if (seconds < 86400) return Math.round(seconds / 3600) + "h ago";
+    return Math.round(seconds / 86400) + "d ago";
   }
 
-  document.getElementById("alertCta").addEventListener("click", () => switchView("hot-tables"));
+  function setCallout({ variant, icon, title, desc, chips = [], showCta }) {
+    callout.classList.remove("calm", "empty");
+    if (variant) callout.classList.add(variant);
+    alertIcon.textContent = icon;
+    alertTitle.textContent = title;
+    alertDesc.textContent = desc;
+    alertChips.innerHTML = chips.map(c => `<span class="alert-chip">${c}</span>`).join("");
+    alertCta.hidden = !showCta;
+  }
+
+  function renderOverview(data) {
+    document.getElementById("ovDbs").textContent = data.databases;
+    document.getElementById("ovTables").textContent = data.tablesTracked;
+    document.getElementById("ovBusiest").textContent = data.busiest ? data.busiest.table : "—";
+    document.getElementById("ovLastPoll").textContent = data.lastPoll ? relativeTime(data.lastPoll) : "never";
+
+    if (data.tablesTracked === 0) {
+      setCallout({
+        variant: "empty",
+        icon: "·",
+        title: "No metrics stored yet",
+        desc: "Nothing has been written to storage in the last hour. Is the agent running, and is it pointed at a database with tables in it?",
+        showCta: false,
+      });
+      return;
+    }
+
+    const attention = data.needsAttention || [];
+    if (attention.length > 0) {
+      setCallout({
+        icon: "!",
+        title: attention.length + (attention.length === 1 ? " table needs" : " tables need") + " attention",
+        desc: "Dead-tuple ratio above 15% — autovacuum is falling behind on these tables.",
+        chips: attention.map(t => `${t.database}.${t.table}`),
+        showCta: true,
+      });
+    } else {
+      setCallout({
+        variant: "calm",
+        icon: "✓",
+        title: "Everything's healthy",
+        desc: "No tracked table has fallen behind on vacuuming.",
+        showCta: true,
+      });
+    }
+  }
+
+  async function loadOverview() {
+    try {
+      const res = await fetch("/api/overview");
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      renderOverview(await res.json());
+    } catch (err) {
+      setCallout({
+        variant: "empty",
+        icon: "!",
+        title: "Can't reach the API",
+        desc: "/api/overview did not respond (" + err.message + "). Is the server running and connected to storage?",
+        showCta: false,
+      });
+    }
+  }
+
+  loadOverview();
+  setInterval(loadOverview, 15000);
+
+  alertCta.addEventListener("click", () => switchView("hot-tables"));
 
   const views = { overview: document.getElementById("view-overview"), "hot-tables": document.getElementById("view-hot-tables") };
   const navItems = document.querySelectorAll(".nav-item[data-view]");
